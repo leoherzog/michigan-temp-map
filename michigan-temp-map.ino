@@ -117,11 +117,6 @@ void loop() {
   int secondUTC = timeinfo->tm_sec;
   double timeInDecimalHours = hourUTC + (minuteUTC / 60.0) + (secondUTC / 3600.0);
 
-  Serial.println(timeInDecimalHours);
-  Serial.println(n_dawn);
-  Serial.println(transit);
-  Serial.println(n_dusk);
-
   if (timeInDecimalHours >= n_dawn && timeInDecimalHours <= transit) {
     int brightness = mapPercentage(timeInDecimalHours, n_dawn, transit, 0, 127);
     Serial.println("Setting brightness to " + String(brightness));
