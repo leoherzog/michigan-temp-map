@@ -13,7 +13,6 @@
 
 time_t now;
 struct tm *timeinfo;
-struct tm *tm_utc = gmtime(&now);
 
 const String stations[] = {"KBEH","KLWA","KAZO","KOEB","KJXN","KARB","KDUH","KDTW","KMTC","KPTK","KOZW","KLAN","KGRR","KBIV","KMKG","KFFX","KRQB","KAMN","KFNT","KD95","KPHN","KP58","KBAX","KCFS","KHYX","KIKW","KOSC","KAPN","KGLR","KHTL","KCAD","KMBL","KLDM","KTVC","KCVX","KSLH","KCIU","KANJ","KERY","KISQ","KP53","KSAW","KESC","KMNM","KIMT","KIWD","KCMX","KP59"};
 time_t lastUpdatedTimes[sizeof(stations) / sizeof(stations[0])];
@@ -81,7 +80,7 @@ void setup() {
     time(&now);
     delay(1000);
   }
-  timeinfo = localtime(&now);
+  timeinfo = gmtime(&now);
 
   Serial.print("Fetched! Current time: ");
   char time_str[9];
@@ -104,7 +103,7 @@ void setup() {
 void loop() {
 
   time(&now);
-  timeinfo = localtime(&now);
+  timeinfo = gmtime(&now);
   
   calcSunriseSunset(now, latitude, longitude, transit, sunrise, sunset);
   calcNauticalDawnDusk(now, latitude, longitude, transit, n_dawn, n_dusk);
