@@ -190,9 +190,12 @@ void loop() {
       pixels.show();
       continue;
     }
+    
+    if (doc["properties"]["temperature"]["value"].isNull()) {
+      continue;
+    }
 
     String unit = doc["properties"]["temperature"]["unitCode"];
-    
     float temp = doc["properties"]["temperature"]["value"];
     if (unit != "wmoUnit:degC") {
       temp = (temp - 32) * 5.0 / 9.0;
