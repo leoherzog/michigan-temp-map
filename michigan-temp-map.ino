@@ -14,14 +14,17 @@
 time_t now;
 struct tm *timeinfo;
 
+const char* ssid = "IoT";
+const char* psk = "humanbeings";
 const String stations[] = {"KBEH","KLWA","KAZO","KOEB","KJXN","KARB","KDUH","KDTW","KMTC","KPTK","KOZW","KLAN","KGRR","KBIV","KMKG","KFFX","KRQB","KAMN","KFNT","KD95","KPHN","KP58","KBAX","KCFS","KHYX","KIKW","KOSC","KAPN","KGLR","KHTL","KCAD","KMBL","KLDM","KTVC","KCVX","KSLH","KCIU","KANJ","KERY","KISQ","KP53","KSAW","KESC","KMNM","KIMT","KIWD","KCMX","KP59"};
 time_t lastUpdatedTimes[sizeof(stations) / sizeof(stations[0])];
+
 Adafruit_NeoPixel pixels(LEDS, PIN, NEO_RGB + NEO_KHZ800);
 DynamicJsonDocument doc(6144);
 
 double latitude = 42.77;
 double longitude = -86.10;
-double transit, sunrise, sunset, n_dawn, n_dusk;
+double transit, n_dawn, n_dusk;
 
 uint32_t tempColors[] = {
   0x00734669, // #734669
@@ -56,8 +59,9 @@ void setup() {
   
   WiFi.mode(WIFI_STA);
   Serial.println("Attempting to connect...");
-  WiFi.begin("IoT", "humanbeings");
+  WiFi.begin(ssid, psk);
 
+  unsigned long startTime = millis();
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     for (int i = 0; i < LEDS; i++) {
@@ -65,7 +69,14 @@ void setup() {
     }
     pixels.show();
     delay(1000);
+    if (millis() - startTime >= 60000) {
+      Serial.println("Failed to connect to WiFi within 60 seconds. Restarting...");
+      ESP.restart();
+    }
   }
+
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
 
   Serial.println(WiFi.localIP());
 
@@ -87,16 +98,21 @@ void setup() {
   sprintf(time_str, "%02d:%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
   Serial.println(time_str);
 
-  for (int i = 0; i < sizeof(stations) / sizeof(stations[0]); i++) {
-    lastUpdatedTimes[i] = now - 3600; // Initialize our last updated array with times over an hour ago
-  }
-
   for (int i = 0; i < LEDS; i++) {
     pixels.setPixelColor(i, pixels.Color(0, 255, 0, 0));
   }
   pixels.show();
 
+  for (int i = 0; i < sizeof(stations) / sizeof(stations[0]); i++) {
+    lastUpdatedTimes[i] = now - 3600; // Initialize our last updated array with times over an hour ago
+  }
+
   m2c.begin(tempDomain, tempColors);
+
+  for (int i = 0; i < LEDS; i++) {
+    pixels.setPixelColor(i, pixels.Color(0, 0, 0, 0));
+  }
+  pixels.show();
   
 }
 
@@ -105,28 +121,32 @@ void loop() {
   time(&now);
   timeinfo = gmtime(&now);
   
-  calcSunriseSunset(now, latitude, longitude, transit, sunrise, sunset);
   calcNauticalDawnDusk(now, latitude, longitude, transit, n_dawn, n_dusk);
-  if (n_dusk >= 24) {
-    n_dusk -= 24;
-  }
 
   int hourUTC = timeinfo->tm_hour;
   int minuteUTC = timeinfo->tm_min;
   int secondUTC = timeinfo->tm_sec;
   double timeInDecimalHours = hourUTC + (minuteUTC / 60.0) + (secondUTC / 3600.0);
 
+  Serial.println(timeInDecimalHours);
+  Serial.println(transit);
+  Serial.println(n_dawn);
+  Serial.println(n_dusk);
+
   if (timeInDecimalHours >= n_dawn && timeInDecimalHours <= transit) {
+    // if between n_dawn and transit
     int brightness = mapPercentage(timeInDecimalHours, n_dawn, transit, 0, 127);
     Serial.println("Setting brightness to " + String(brightness));
     pixels.setBrightness(brightness);
     pixels.show();
-  } else if (timeInDecimalHours >= transit && timeInDecimalHours <= n_dusk) {
+  } else if (timeInDecimalHours >= transit && (timeInDecimalHours <= n_dusk || (n_dusk < transit && timeInDecimalHours >= 0 && timeInDecimalHours <= n_dusk))) {
+    // if between transit and n_dusk, also checking if n_dusk is greater than 24 hours but time has wrapped around back to zero (UTC)
     int brightness = mapPercentage(timeInDecimalHours, transit, n_dusk, 127, 0);
     Serial.println("Setting brightness to " + String(brightness));
     pixels.setBrightness(brightness);
     pixels.show();
   } else {
+    // must be after n_dusk or before n_dawn
     Serial.println("Setting brightness to 0");
     pixels.setBrightness(0);
     pixels.show();
@@ -151,7 +171,7 @@ void loop() {
 
     String response = get(url.c_str());
 
-    if (response == "0") { // http response error
+    if (response == "{}") { // http response error
       Serial.println("HTTP error");
       continue;
     }
@@ -161,12 +181,11 @@ void loop() {
       Serial.println("JSON parse error: " + String(error.c_str()));
       continue;
     }
-
     time(&now);
     String timestamp = doc["properties"]["timestamp"];
     time_t observationTime = parseTimestamp(timestamp);
-    if (difftime(now, observationTime) > (4 * 60 * 60)) { // four hours
-      Serial.println("Latest observation is over 4 hours old (" + timestamp + ")");
+    if (difftime(now, observationTime) > (2 * 60 * 60)) { // two hours
+      Serial.println("Latest observation is over 2 hours old (" + timestamp + ")");
       pixels.setPixelColor(stationIndex, pixels.Color(0, 0, 0, 0));
       pixels.show();
       continue;
@@ -244,22 +263,22 @@ String get(String serverName) {
       // Handle redirection
       Serial.print("Redirection: ");
       Serial.println(httpResponseCode);
-      return "0";
+      return "{}";
     } else if (httpResponseCode >= 400 && httpResponseCode < 500) {
       // Handle client-side errors
       Serial.print("Client error: ");
       Serial.println(httpResponseCode);
-      return "0";
+      return "{}";
     } else if (httpResponseCode >= 500 && httpResponseCode < 600) {
       // Handle server-side errors
       Serial.print("Server error: ");
       Serial.println(httpResponseCode);
-      return "0";
+      return "{}";
     }
   } else {
     Serial.print("Error code: ");
     Serial.println(httpResponseCode);
-    return "0";
+    return "{}";
   }
    
   http.end();
