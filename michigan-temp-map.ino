@@ -20,11 +20,10 @@ const String stations[] = {"KBEH","KLWA","KAZO","KOEB","KJXN","KARB","KDUH","KDT
 time_t lastUpdatedTimes[sizeof(stations) / sizeof(stations[0])];
 
 Adafruit_NeoPixel pixels(LEDS, PIN, NEO_RGB + NEO_KHZ800);
-DynamicJsonDocument doc(6144);
 
 double latitude = 42.77;
 double longitude = -86.10;
-double transit, n_dawn, n_dusk;
+double a_dawn, transit, a_dusk;
 
 uint32_t tempColors[] = {
   0x00734669, // #734669
@@ -50,7 +49,7 @@ void setup() {
   delay(2000);
 
   pixels.begin();
-  pixels.setBrightness(63);
+  pixels.setBrightness(31);
 
   for (int i = 0; i < LEDS; i++) {
     pixels.setPixelColor(i, pixels.Color(255, 0, 0, 0));
@@ -64,10 +63,6 @@ void setup() {
   unsigned long startTime = millis();
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
-    for (int i = 0; i < LEDS; i++) {
-      pixels.setPixelColor(i, pixels.Color(255, 255, 0, 0));
-    }
-    pixels.show();
     delay(1000);
     if (millis() - startTime >= 60000) {
       Serial.println("Failed to connect to WiFi within 60 seconds. Restarting...");
@@ -79,6 +74,11 @@ void setup() {
   WiFi.persistent(true);
 
   Serial.println(WiFi.localIP());
+
+  for (int i = 0; i < LEDS; i++) {
+    pixels.setPixelColor(i, pixels.Color(255, 255, 0, 0));
+  }
+  pixels.show();
 
   Serial.println("Fetching NTP time...");
 
@@ -121,7 +121,7 @@ void loop() {
   time(&now);
   timeinfo = gmtime(&now);
   
-  calcNauticalDawnDusk(now, latitude, longitude, transit, n_dawn, n_dusk);
+  calcAstronomicalDawnDusk(now, latitude, longitude, transit, a_dawn, a_dusk);
 
   int hourUTC = timeinfo->tm_hour;
   int minuteUTC = timeinfo->tm_min;
@@ -129,24 +129,29 @@ void loop() {
   double timeInDecimalHours = hourUTC + (minuteUTC / 60.0) + (secondUTC / 3600.0);
 
   Serial.println(timeInDecimalHours);
+  Serial.println(a_dawn);
   Serial.println(transit);
-  Serial.println(n_dawn);
-  Serial.println(n_dusk);
+  Serial.println(a_dusk);
 
-  if (timeInDecimalHours >= n_dawn && timeInDecimalHours <= transit) {
-    // if between n_dawn and transit
-    int brightness = mapPercentage(timeInDecimalHours, n_dawn, transit, 0, 127);
+  double effectiveTimeInDecimalHours = timeInDecimalHours;
+  if (a_dusk > 24 && timeInDecimalHours + 24 <= a_dusk) {
+    effectiveTimeInDecimalHours += 24;
+  }
+  if (timeInDecimalHours >= a_dawn && timeInDecimalHours <= transit) {
+    // if between a_dawn and transit
+    int brightness = mapPercentage(effectiveTimeInDecimalHours, a_dawn, transit, 0, 127);
     Serial.println("Setting brightness to " + String(brightness));
     pixels.setBrightness(brightness);
     pixels.show();
-  } else if (timeInDecimalHours >= transit && (timeInDecimalHours <= n_dusk || (n_dusk < transit && timeInDecimalHours >= 0 && timeInDecimalHours <= n_dusk))) {
-    // if between transit and n_dusk, also checking if n_dusk is greater than 24 hours but time has wrapped around back to zero (UTC)
-    int brightness = mapPercentage(timeInDecimalHours, transit, n_dusk, 127, 0);
+} else if ((timeInDecimalHours >= transit && timeInDecimalHours <= a_dusk) ||
+           (effectiveTimeInDecimalHours >= transit && effectiveTimeInDecimalHours <= a_dusk)) {
+    // if between transit and a_dusk
+    int brightness = mapPercentage(effectiveTimeInDecimalHours, transit, a_dusk, 127, 0);
     Serial.println("Setting brightness to " + String(brightness));
     pixels.setBrightness(brightness);
     pixels.show();
   } else {
-    // must be after n_dusk or before n_dawn
+    // must be after a_dusk or before a_dawn
     Serial.println("Setting brightness to 0");
     pixels.setBrightness(0);
     pixels.show();
@@ -160,47 +165,30 @@ void loop() {
   for (int stationIndex = 0; stationIndex < numberOfStations; stationIndex++) {
 
     time(&now);
-    if (difftime(now, lastUpdatedTimes[stationIndex]) > (60 * 60)) { // if it's been over an hour since last successful fetch for this one
+    if (difftime(now, lastUpdatedTimes[stationIndex]) > (2 * 60 * 60)) { // if it's been over two hours since last successful fetch for this one
       pixels.setPixelColor(stationIndex, pixels.Color(0, 0, 0, 0));
       pixels.show();
     }
 
-    Serial.println("Fetching " + stations[stationIndex] + "...");
+    String station = stations[stationIndex];
 
-    String url = "https://api.weather.gov/stations/" + String(stations[stationIndex]) + "/observations/latest";
+    Serial.println("Fetching " + station + "...");
 
-    String response = get(url.c_str());
-
-    if (response == "{}") { // http response error
-      Serial.println("HTTP error");
-      continue;
+    float temp = getStationTemp(station);
+    if (temp == -999) { // error fetching actual station. fall back on nws json api.
+      Serial.println("No live " + station + " observations. Falling back on nearby station observations...");
+      temp = getNearestStationTemp(station);
     }
-
-    DeserializationError error = deserializeJson(doc, response);
-    if (error) {
-      Serial.println("JSON parse error: " + String(error.c_str()));
-      continue;
-    }
-    time(&now);
-    String timestamp = doc["properties"]["timestamp"];
-    time_t observationTime = parseTimestamp(timestamp);
-    if (difftime(now, observationTime) > (2 * 60 * 60)) { // two hours
-      Serial.println("Latest observation is over 2 hours old (" + timestamp + ")");
-      pixels.setPixelColor(stationIndex, pixels.Color(0, 0, 0, 0));
-      pixels.show();
-      continue;
+    if (temp == -999) { // error fetching actual station. fall back on nws json api.
+      Serial.println("No nearby station observations either. Falling back on forecast data...");
+      temp = getForecastTemp(station);
     }
     
-    if (doc["properties"]["temperature"]["value"].isNull()) {
+    if (temp == -999) {
+      // don't update if we failed all above
       continue;
     }
-
-    String unit = doc["properties"]["temperature"]["unitCode"];
-    float temp = doc["properties"]["temperature"]["value"];
-    if (unit != "wmoUnit:degC") {
-      temp = (temp - 32) * 5.0 / 9.0;
-    }
-    
+      
     Serial.println("Temp: " + String(temp) + "°C");
 
     uint32_t rgbColor = m2c.map2RGB(temp); // convert to rgb color on the scale
@@ -217,6 +205,7 @@ void loop() {
     Serial.println();
     pixels.setPixelColor(stationIndex, pixels.Color(r, g, b, 0));
 
+    time(&now);
     lastUpdatedTimes[stationIndex] = now;
     
     pixels.show();
@@ -226,6 +215,188 @@ void loop() {
   Serial.println("Sleeping for 5 minutes...");
   delay(5 * 60 * 1000);
   
+}
+
+float getStationTemp(String stationId) {
+
+  DynamicJsonDocument doc(128000);
+  
+  String url = "https://api.weather.gov/stations/" + stationId + "/observations?limit=5";
+
+  String response = get(url.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  DeserializationError error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  time(&now);
+  JsonArray observations = doc["features"];
+  for(JsonVariant observation : observations) {
+
+    String timestamp = observation["properties"]["timestamp"];
+    time_t observationTime = parseTimestamp(timestamp);
+    if (difftime(now, observationTime) > (2 * 60 * 60)) { // two hours
+      continue;
+    }
+    
+    if (observation["properties"]["temperature"]["value"].isNull()) {
+      continue;
+    }
+
+    String unit = observation["properties"]["temperature"]["unitCode"];
+    float temp = observation["properties"]["temperature"]["value"];
+    if (unit != "wmoUnit:degC") {
+      temp = (temp - 32) * 5.0 / 9.0;
+    }
+    
+    return temp;
+
+  }
+
+  return -999;
+
+}
+
+float getNearestStationTemp(String stationId) {
+
+  DynamicJsonDocument doc(128000);
+
+  String stationUrl = "https://api.weather.gov/stations/" + stationId;
+
+  String response = get(stationUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  DeserializationError error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  String lat = doc["geometry"]["coordinates"][1];
+  String lon = doc["geometry"]["coordinates"][0];
+
+  String pointUrl = "https://api.weather.gov/points/" + lat + "," + lon;
+
+  response = get(pointUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  String stationsUrl = doc["properties"]["observationStations"];
+  stationsUrl = stationsUrl + "?limit=5";
+
+  response = get(stationsUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  JsonArray stations = doc["features"];
+  
+  for (JsonVariant station : stations) {
+    String nearbyStationId = station["properties"]["stationIdentifier"];
+    float temp = getStationTemp(nearbyStationId);
+    if (temp != -999) {
+      return temp;
+    }
+  }
+
+  return -999;
+
+}
+
+float getForecastTemp(String stationId) {
+
+  DynamicJsonDocument doc(128000);
+
+  String stationUrl = "https://api.weather.gov/stations/" + stationId;
+
+  String response = get(stationUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  DeserializationError error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  String lat = doc["geometry"]["coordinates"][1];
+  String lon = doc["geometry"]["coordinates"][0];
+
+  String pointUrl = "https://api.weather.gov/points/" + lat + "," + lon;
+
+  response = get(pointUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  String forecastUrl = doc["properties"]["forecast"];
+  forecastUrl = forecastUrl + "?units=si";
+
+  response = get(forecastUrl.c_str());
+
+  if (response == "{}") { // http response error
+    Serial.println("HTTP error");
+    return -999;
+  }
+
+  error = deserializeJson(doc, response);
+  if (error) {
+    Serial.println("JSON parse error: " + String(error.c_str()));
+    Serial.println(String(response));
+    return -999;
+  }
+
+  float temp = doc["properties"]["periods"][0]["temperature"].as<float>();
+
+  Serial.println(temp);
+
+  return temp;
+
 }
 
 int mapPercentage(double x, double in_min, double in_max, int out_min, int out_max) {
@@ -249,6 +420,8 @@ String get(String serverName) {
 
   client.setInsecure();
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+  Serial.println("GET: " + serverName);
   
   http.begin(client, serverName);
 
