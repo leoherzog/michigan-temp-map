@@ -25,21 +25,36 @@ double latitude = 42.77;
 double longitude = -86.10;
 double a_dawn, transit, a_dusk;
 
+// uint32_t tempColors[] = {
+//   0x00734669, // #734669
+//   0x00caacc3, // #caacc3
+//   0x00a24691, // #a24691
+//   0x008f59a9, // #8f59a9
+//   0x009ddbd9, // #9ddbd9
+//   0x006abfb5, // #6abfb5
+//   0x0064a6bd, // #64a6bd
+//   0x005d85c6, // #5d85c6
+//   0x00447d63, // #447d63
+//   0x00809318, // #809318
+//   0x00f3b704, // #f3b704
+//   0x00e85319, // #e85319
+//   0x00470e00  // #470e00
+// }; // original windy.com scale
 uint32_t tempColors[] = {
-  0x00734669, // #734669
-  0x00caacc3, // #caacc3
-  0x00a24691, // #a24691
+  0x00853373, // #853373
+  0x00d89eca, // #d89eca
+  0x00b92fa0, // #b92fa0
   0x008f59a9, // #8f59a9
-  0x009ddbd9, // #9ddbd9
-  0x006abfb5, // #6abfb5
-  0x0064a6bd, // #64a6bd
-  0x005d85c6, // #5d85c6
-  0x00447d63, // #447d63
-  0x00809318, // #809318
-  0x00f3b704, // #f3b704
-  0x00e85319, // #e85319
+  0x009840c2, // #9840c2
+  0x0055d4c5, // #55d4c5
+  0x004eb1d3, // #4eb1d3
+  0x004780dc, // #4780dc
+  0x00319065, // #319065
+  0x008ca407, // #8ca407
+  0x00f7b900, // #f7b900
+  0x00ff4902, // #ff4902
   0x00470e00  // #470e00
-}; // windy.com scale
+}; // saturated 20% windy.com scale
 float tempDomain[] = {-70, -55, -40, -25, -15, -8.33, -3.89, 0, 1, 10, 21, 30, 45};
 map2colour m2c(13);
 
