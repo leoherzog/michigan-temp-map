@@ -234,7 +234,7 @@ void loop() {
 
 float getStationTemp(String stationId) {
 
-  DynamicJsonDocument doc(128000);
+  JsonDocument doc;
   
   String url = "https://api.weather.gov/stations/" + stationId + "/observations?limit=5";
 
@@ -282,7 +282,7 @@ float getStationTemp(String stationId) {
 
 float getNearestStationTemp(String stationId) {
 
-  DynamicJsonDocument doc(128000);
+  JsonDocument doc;
 
   String stationUrl = "https://api.weather.gov/stations/" + stationId;
 
@@ -352,7 +352,7 @@ float getNearestStationTemp(String stationId) {
 
 float getForecastTemp(String stationId) {
 
-  DynamicJsonDocument doc(128000);
+  JsonDocument doc;
 
   String stationUrl = "https://api.weather.gov/stations/" + stationId;
 
